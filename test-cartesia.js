@@ -14,7 +14,7 @@ if (!CARTESIA_API_KEY) {
 
 async function testCartesiaAPI() {
     const requestBody = {
-        model_id: 'sonic-2',
+        model_id: 'sonic-turbo',
         transcript: 'Hello, world! This is a test of the Cartesia text-to-speech API.',
         voice: {
             mode: 'id',

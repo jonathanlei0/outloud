@@ -17,6 +17,27 @@
 
         <main>
             <div class="section">
+                <h3>Auto-Read Settings</h3>
+
+                <div class="setting">
+                    <label for="autoRead" class="toggle-label">
+                        <input type="checkbox" id="autoRead">
+                        <span class="toggle-slider"></span>
+                        Auto-read selected text
+                    </label>
+                </div>
+
+                <div class="setting" id="languageDetectionSetting" style="display: none;">
+                    <label for="languageDetection">Language Detection:</label>
+                    <select id="languageDetection">
+                        <option value="auto">Auto-detect (EN/中文)</option>
+                        <option value="en">Always English</option>
+                        <option value="zh">Always Chinese</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="section">
                 <h3>Quick Actions</h3>
                 <button id="speakSelected" class="btn btn-primary">
                     Speak Selected Text
@@ -30,15 +51,18 @@
                 <h3>Voice Settings</h3>
 
                 <div class="setting">
-                    <label for="rate">Speed:</label>
-                    <input type="range" id="rate" min="0.5" max="2" step="0.1" value="1">
-                    <span id="rateValue">1x</span>
+                    <label for="speed">Speed:</label>
+                    <select id="speed">
+                        <option value="slow">Slow</option>
+                        <option value="normal">Normal</option>
+                        <option value="fast">Fast</option>
+                    </select>
                 </div>
 
                 <div class="setting">
                     <label for="voice">Voice:</label>
                     <select id="voice">
-                        <option value="">Default Voice</option>
+                        <option value="">Auto-select by language</option>
                     </select>
                 </div>
             </div>
@@ -46,9 +70,11 @@
             <div class="section">
                 <h3>How to Use</h3>
                 <ul class="instructions">
+                    <li>Toggle "Auto-read" to automatically speak selected text</li>
                     <li>Select text on any webpage</li>
                     <li>Click "Speak Selected Text" or use <kbd>Ctrl+Shift+S</kbd></li>
                     <li>Choose from high-quality AI voices above</li>
+                    <li>Supports English and Chinese (中文) text</li>
                     <li>Powered by Cartesia AI</li>
                 </ul>
             </div>

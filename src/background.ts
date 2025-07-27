@@ -89,12 +89,14 @@ async function handleSpeakText(message: any, sendResponse: (response: any) => vo
     const request: CartesiaTTSRequest = {
       text: message.text,
       voiceId: message.options?.voice,
-      speed: message.options?.rate || 1
+      speed: message.options?.speed || 'normal',  // Use speed instead of rate
+      language: message.options?.language || 'en'
     };
     
     console.log('🔊 Generating speech with Cartesia for:', message.text.substring(0, 50) + '...');
-    console.log('Voice ID:', request.voiceId || 'default');
+    console.log('Voice ID:', request.voiceId || 'auto-select');
     console.log('Speed:', request.speed);
+    console.log('Language:', request.language);
     
     // Generate MP3 audio using Cartesia
     console.log('📡 Calling Cartesia API...');
