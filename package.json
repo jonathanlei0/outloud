@@ -1,0 +1,19 @@
+{
+  "name": "outloud",
+  "version": "1.0.0",
+  "description": "Chrome extension to read selected text aloud",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch --mode development",
+    "build": "vite build && node fix-build.js",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "typescript": "^5.2.2",
+    "vite": "^5.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.1"
+  }
+}
