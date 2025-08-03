@@ -1,4 +1,4 @@
-// Popup script for OutLoud extension with Cartesia TTS
+// Popup script for OutLoud extension with Cartesia TTS - Chinese only
 import { SupportedLanguage } from '../utils/languageDetection.js';
 
 type SpeedSetting = 'slow' | 'normal' | 'fast';
@@ -6,15 +6,13 @@ type SpeedSetting = 'slow' | 'normal' | 'fast';
 interface VoiceSettings {
   speed: SpeedSetting;
   voice: string;
-  autoRead: boolean;
-  languageDetection: 'auto' | 'en' | 'zh';
+  isEnabled: boolean;
 }
 
 let currentSettings: VoiceSettings = {
   speed: 'normal',
   voice: '',
-  autoRead: false,
-  languageDetection: 'auto'
+  isEnabled: false
 };
 
 // DOM elements
@@ -22,9 +20,7 @@ const speakSelectedBtn = document.getElementById('speakSelected') as HTMLButtonE
 const stopSpeakingBtn = document.getElementById('stopSpeaking') as HTMLButtonElement;
 const speedSelect = document.getElementById('speed') as HTMLSelectElement;
 const voiceSelect = document.getElementById('voice') as HTMLSelectElement;
-const autoReadCheckbox = document.getElementById('autoRead') as HTMLInputElement;
-const languageDetectionSelect = document.getElementById('languageDetection') as HTMLSelectElement;
-const languageDetectionSetting = document.getElementById('languageDetectionSetting') as HTMLDivElement;
+const enableSwitch = document.getElementById('enableSwitch') as HTMLInputElement;
 
 // Initialize popup
 document.addEventListener('DOMContentLoaded', async () => {
@@ -44,45 +40,41 @@ async function loadSettings() {
 async function saveSettings() {
   await chrome.storage.local.set({ voiceSettings: currentSettings });
   
-  // Notify content script about auto-read setting change
+  // Notify content script about setting changes
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id && await isContentScriptReady(tab.id)) {
     sendMessageToTab(tab.id, { 
-      type: 'UPDATE_AUTO_READ_SETTINGS', 
+      type: 'UPDATE_SETTINGS', 
       settings: currentSettings 
     });
   }
 }
 
 async function loadVoices() {
-  // Get available voices from content script (now Cartesia voices)
+  // Get available voices from content script (Chinese voices only)
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id && await isContentScriptReady(tab.id)) {
     sendMessageToTab(tab.id, { type: 'GET_VOICES' }, (response) => {
       if (response && response.voices) {
         populateVoiceSelect(response.voices);
       } else {
-        // Fallback to hardcoded voices if content script doesn't respond
+        // Fallback to hardcoded Chinese voices
         populateVoiceSelect([
-          { id: '694f9389-aac1-45b6-b726-9d9369183238', name: 'Default Voice', language: 'en' },
-          { id: 'a0e99841-438c-4a64-b679-ae501e7d6091', name: 'British Male', language: 'en' },
-          { id: '2ee87190-8f84-4925-97da-e52547f9462c', name: 'American Female', language: 'en' },
-          { id: '820a3788-2b37-4d21-847a-b65d8a68c99a', name: 'Australian Male', language: 'en' },
-          { id: '87748186-23bb-4158-a1eb-332911b0b708', name: '中文女声', language: 'zh' },
-          { id: 'b9de4a89-2f3e-4f5c-9b8d-7c4a6b2f8e3d', name: '中文男声', language: 'zh' }
+          { id: 'c59c247b-6aa9-4ab6-91f9-9eabea7dc69e', name: 'Chinese Lecturer Male', language: 'zh', gender: 'male' },
+          { id: '7a5d4663-88ae-47b7-808e-8f9b9ee4127b', name: 'Chinese Upbeat Female', language: 'zh', gender: 'female' },
+          { id: 'eda5bbff-1ff1-4886-8ef1-4e69a77640a0', name: 'Chinese News Male', language: 'zh', gender: 'male' },
+          { id: 'bf32f849-7bc9-4b91-8c62-954588efcc30', name: 'Chinese Normal Male', language: 'zh', gender: 'male' }
         ]);
       }
     });
   } else {
-    // Fallback to hardcoded voices if no valid tab
+    // Fallback to hardcoded Chinese voices
     populateVoiceSelect([
-      { id: '694f9389-aac1-45b6-b726-9d9369183238', name: 'Default Voice', language: 'en' },
-      { id: 'a0e99841-438c-4a64-b679-ae501e7d6091', name: 'British Male', language: 'en' },
-      { id: '2ee87190-8f84-4925-97da-e52547f9462c', name: 'American Female', language: 'en' },
-      { id: '820a3788-2b37-4d21-847a-b65d8a68c99a', name: 'Australian Male', language: 'en' },
-      { id: '87748186-23bb-4158-a1eb-332911b0b708', name: '中文女声', language: 'zh' },
-      { id: 'b9de4a89-2f3e-4f5c-9b8d-7c4a6b2f8e3d', name: '中文男声', language: 'zh' }
-    ]);
+      { id: 'c59c247b-6aa9-4ab6-91f9-9eabea7dc69e', name: 'Chinese Lecturer Male', language: 'zh', gender: 'male' },
+      { id: '7a5d4663-88ae-47b7-808e-8f9b9ee4127b', name: 'Chinese Upbeat Female', language: 'zh', gender: 'female' },
+      { id: 'eda5bbff-1ff1-4886-8ef1-4e69a77640a0', name: 'Chinese News Male', language: 'zh', gender: 'male' },
+      { id: 'bf32f849-7bc9-4b91-8c62-954588efcc30', name: 'Chinese Normal Male', language: 'zh', gender: 'male' }
+      ]);
   }
 }
 
@@ -111,51 +103,26 @@ function sendMessageToTab(tabId: number, message: any, callback?: (response: any
 }
 
 function populateVoiceSelect(voices: any[]) {
-  voiceSelect.innerHTML = '<option value="">Auto-select by language</option>';
+  voiceSelect.innerHTML = '<option value="">Default Chinese Voice</option>';
   
-  // Group voices by language
-  const englishVoices = voices.filter(v => v.language === 'en');
+  // Only show Chinese voices
   const chineseVoices = voices.filter(v => v.language === 'zh');
   
-  if (englishVoices.length > 0) {
-    const englishGroup = document.createElement('optgroup');
-    englishGroup.label = 'English';
-    englishVoices.forEach((voice) => {
-      const option = document.createElement('option');
-      option.value = voice.id;
-      option.textContent = voice.name;
-      englishGroup.appendChild(option);
-    });
-    voiceSelect.appendChild(englishGroup);
-  }
-  
-  if (chineseVoices.length > 0) {
-    const chineseGroup = document.createElement('optgroup');
-    chineseGroup.label = '中文';
-    chineseVoices.forEach((voice) => {
-      const option = document.createElement('option');
-      option.value = voice.id;
-      option.textContent = voice.name;
-      chineseGroup.appendChild(option);
-    });
-    voiceSelect.appendChild(chineseGroup);
-  }
+  chineseVoices.forEach((voice) => {
+    const option = document.createElement('option');
+    option.value = voice.id;
+    option.textContent = voice.name;
+    voiceSelect.appendChild(option);
+  });
   
   // Set current selection
   voiceSelect.value = currentSettings.voice;
 }
 
 function setupEventListeners() {
-  // Auto-read toggle
-  autoReadCheckbox.addEventListener('change', () => {
-    currentSettings.autoRead = autoReadCheckbox.checked;
-    updateUI();
-    saveSettings();
-  });
-  
-  // Language detection setting
-  languageDetectionSelect.addEventListener('change', () => {
-    currentSettings.languageDetection = languageDetectionSelect.value as 'auto' | 'en' | 'zh';
+  // Enable/disable toggle
+  enableSwitch.addEventListener('change', () => {
+    currentSettings.isEnabled = enableSwitch.checked;
     saveSettings();
   });
   
@@ -168,7 +135,10 @@ function setupEventListeners() {
       chrome.runtime.sendMessage({
         type: 'SPEAK_TEXT',
         text: text,
-        options: currentSettings
+        options: {
+          ...currentSettings,
+          language: 'zh'  // Force Chinese
+        }
       }, (response) => {
         if (chrome.runtime.lastError) {
           console.error('Error sending message to background:', chrome.runtime.lastError.message);
@@ -187,7 +157,10 @@ function setupEventListeners() {
             chrome.runtime.sendMessage({
               type: 'SPEAK_TEXT',
               text: response.text,
-              options: currentSettings
+              options: {
+                ...currentSettings,
+                language: 'zh'  // Force Chinese
+              }
             }, (response) => {
               if (chrome.runtime.lastError) {
                 console.error('Error sending message to background:', chrome.runtime.lastError.message);
@@ -231,13 +204,5 @@ function setupEventListeners() {
 function updateUI() {
   speedSelect.value = currentSettings.speed;
   voiceSelect.value = currentSettings.voice;
-  autoReadCheckbox.checked = currentSettings.autoRead;
-  languageDetectionSelect.value = currentSettings.languageDetection;
-  
-  // Show/hide language detection setting based on auto-read toggle
-  if (currentSettings.autoRead) {
-    languageDetectionSetting.style.display = 'flex';
-  } else {
-    languageDetectionSetting.style.display = 'none';
-  }
+  enableSwitch.checked = currentSettings.isEnabled;
 } 

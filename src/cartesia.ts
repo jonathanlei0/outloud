@@ -30,16 +30,11 @@ export class CartesiaService {
   
   // Cartesia voice IDs for English and Chinese
   static readonly VOICES: CartesiaVoice[] = [
-    // English voices
-    { id: '694f9389-aac1-45b6-b726-9d9369183238', name: 'Default Voice', language: 'en', gender: 'neutral' },
-    { id: 'a0e99841-438c-4a64-b679-ae501e7d6091', name: 'British Male', language: 'en', gender: 'male' },
-    { id: '2ee87190-8f84-4925-97da-e52547f9462c', name: 'American Female', language: 'en', gender: 'female' },
-    { id: '820a3788-2b37-4d21-847a-b65d8a68c99a', name: 'Australian Male', language: 'en', gender: 'male' },
-    
     // Chinese voices (Mandarin)
-    { id: '87748186-23bb-4158-a1eb-332911b0b708', name: '中文女声', language: 'zh', gender: 'female' },
-    { id: 'b9de4a89-2f3e-4f5c-9b8d-7c4a6b2f8e3d', name: '中文男声', language: 'zh', gender: 'male' },
-    { id: 'c8ef5b9a-3f4e-5f6d-ac9e-8d5a7c3f9e4f', name: '台湾女声', language: 'zh', gender: 'female' }
+    { id: 'c59c247b-6aa9-4ab6-91f9-9eabea7dc69e', name: 'Chinese Lecturer Male', language: 'zh', gender: 'male' },
+    { id: '7a5d4663-88ae-47b7-808e-8f9b9ee4127b', name: 'Chinese Upbeat Female', language: 'zh', gender: 'female' },
+    { id: 'eda5bbff-1ff1-4886-8ef1-4e69a77640a0', name: 'Chinese News Male', language: 'zh', gender: 'male' },
+    { id: 'bf32f849-7bc9-4b91-8c62-954588efcc30', name: 'Chinese Normal Male', language: 'zh', gender: 'male' }
   ];
   
   static async generateSpeech(request: CartesiaTTSRequest): Promise<ArrayBuffer> {
@@ -63,8 +58,7 @@ export class CartesiaService {
     
     // If no specific voice is chosen, pick default for the language
     if (!voiceId) {
-      const defaultVoice = CartesiaService.VOICES.find(v => v.language === targetLanguage);
-      voiceId = defaultVoice?.id || CartesiaService.VOICES[0].id;
+      voiceId = 'c59c247b-6aa9-4ab6-91f9-9eabea7dc69e';
     }
     
     console.log('🎵 Using voice:', voiceId, 'for language:', targetLanguage);

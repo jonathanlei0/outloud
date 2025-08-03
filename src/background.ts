@@ -1,11 +1,69 @@
 // Background service worker for OutLoud extension with Cartesia TTS
 import { CartesiaService, CartesiaTTSRequest } from './cartesia.js';
+import { TranslationService } from './utils/translationService.js';
+
+const CACHE_LIMIT = 50; // Cache up to 50 items (audio and translations)
+const apiCache = new Map<string, { audioBuffer?: ArrayBuffer, translation?: string }>();
+
+function getFromCache(key: string) {
+    const item = apiCache.get(key);
+    if (item) {
+        // Refresh it by deleting and setting again to maintain LRU order
+        apiCache.delete(key);
+        apiCache.set(key, item);
+    }
+    return item;
+}
+
+function setInCache(key: string, value: { audioBuffer?: ArrayBuffer, translation?: string }) {
+    if (apiCache.has(key)) {
+        // If key exists, update it, but still respect the LRU logic via getFromCache
+        const existing = getFromCache(key) || {};
+        apiCache.set(key, { ...existing, ...value });
+    } else {
+        if (apiCache.size >= CACHE_LIMIT) {
+            // Evict the oldest entry
+            const oldestKey = apiCache.keys().next().value;
+            apiCache.delete(oldestKey);
+            console.log(`🗑️ Cache full, evicted: "${oldestKey}"`);
+        }
+        apiCache.set(key, value);
+    }
+}
+
+async function getCachedSpeech(text: string, options: any): Promise<ArrayBuffer> {
+    const cached = getFromCache(text);
+    if (cached?.audioBuffer) {
+        console.log(`🎤 Cache HIT for speech: "${text}"`);
+        return cached.audioBuffer;
+    }
+    console.log(`🎤 Cache MISS for speech: "${text}"`);
+    const audioBuffer = await CartesiaService.generateSpeech({ ...options, text });
+    setInCache(text, { audioBuffer });
+    return audioBuffer;
+}
+
+async function getCachedTranslation(text: string): Promise<string> {
+    const cached = getFromCache(text);
+    if (cached?.translation) {
+        console.log(`📜 Cache HIT for translation: "${text}"`);
+        return cached.translation;
+    }
+    console.log(`📜 Cache MISS for translation: "${text}"`);
+    const translation = await TranslationService.translate(text, 'zh', 'en');
+    setInCache(text, { translation });
+    return translation;
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'SPEAK_TEXT') {
-    console.log('🎤 Background received SPEAK_TEXT message:', message.text.substring(0, 50) + '...');
     handleSpeakText(message, sendResponse);
-    return true; // Keep message channel open for async response
+    return true;
+  }
+  
+  if (message.type === 'PROCESS_SELECTION_CHANGE') {
+    handleProcessSelectionChange(message, sendResponse);
+    return true;
   }
   
   if (message.type === 'STOP_SPEAKING') {
@@ -15,6 +73,62 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   
   return false;
 });
+
+async function handleProcessSelectionChange(message: any, sendResponse: (response: any) => void) {
+    const { textToSpeak, textToTranslate, options, selectionRect } = message;
+
+    // Ensure all options passed to services are explicitly set for Chinese
+    const chineseOptions = { ...options, language: 'zh' };
+
+    try {
+        let diffAudioBuffer: ArrayBuffer;
+        let fullAudioBuffer: ArrayBuffer;
+        
+        // Check if diff and full text are the same to avoid duplicate API calls
+        const isDiffSameAsFull = textToSpeak === textToTranslate;
+        
+        if (isDiffSameAsFull) {
+            console.log('🎤 Diff and full text are identical, making single API call');
+            // Only make one speech API call and reuse the result
+            const audioBuffer = await getCachedSpeech(textToTranslate, chineseOptions);
+            diffAudioBuffer = audioBuffer;
+            fullAudioBuffer = audioBuffer;
+        } else {
+            console.log('🎤 Diff and full text are different, making separate API calls');
+            // Make separate calls for diff and full
+            const [diffBuffer, fullBuffer] = await Promise.all([
+                getCachedSpeech(textToSpeak, chineseOptions),
+                getCachedSpeech(textToTranslate, chineseOptions)
+            ]);
+            diffAudioBuffer = diffBuffer;
+            fullAudioBuffer = fullBuffer;
+        }
+
+        // Always get translation (this is cached too)
+        const translation = await getCachedTranslation(textToTranslate);
+
+        // Convert audio buffers to base64
+        const diffAudioData = arrayBufferToBase64(diffAudioBuffer);
+        const fullAudioData = arrayBufferToBase64(fullAudioBuffer);
+
+        // Send all data back to the content script in one go
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.id) {
+            chrome.tabs.sendMessage(tab.id, {
+                type: 'PLAY_DIFFERENCE_AND_FULL',
+                diffAudioData,
+                fullAudioData,
+                translation,
+                selectionRect
+            });
+        }
+        sendResponse({ success: true });
+    } catch (error) {
+        console.error('❌ Error during selection processing:', error);
+        sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+}
+
 
 async function ensureContentScriptReady(tabId: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -89,55 +203,24 @@ async function handleSpeakText(message: any, sendResponse: (response: any) => vo
     const request: CartesiaTTSRequest = {
       text: message.text,
       voiceId: message.options?.voice,
-      speed: message.options?.speed || 'normal',  // Use speed instead of rate
-      language: message.options?.language || 'en'
+      speed: message.options?.speed || 'normal',
+      language: 'zh' // Force Chinese
     };
     
-    console.log('🔊 Generating speech with Cartesia for:', message.text.substring(0, 50) + '...');
-    console.log('Voice ID:', request.voiceId || 'auto-select');
-    console.log('Speed:', request.speed);
-    console.log('Language:', request.language);
-    
-    // Generate MP3 audio using Cartesia
-    console.log('📡 Calling Cartesia API...');
-    const audioBuffer = await CartesiaService.generateSpeech(request);
-    console.log('✅ Received audio buffer:', audioBuffer.byteLength, 'bytes');
-    
-    // Convert ArrayBuffer to base64 for transmission
-    console.log('🔄 Converting to base64...');
+    const audioBuffer = await getCachedSpeech(message.text, request);
     const base64Audio = arrayBufferToBase64(audioBuffer);
-    console.log('✅ Base64 conversion complete:', base64Audio.length, 'characters');
     
-    // Send audio to content script to play
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab?.id) {
-      // Ensure content script is ready first
       const isReady = await ensureContentScriptReady(tab.id);
-      if (!isReady) {
-        console.error('❌ Could not prepare content script');
-        sendResponse({ 
-          success: false, 
-          error: 'Could not prepare audio playback. Make sure you\'re on a regular webpage.' 
-        });
-        return;
-      }
-      
-      // Try to send audio with retries
-      const success = await sendAudioToContentScript(tab.id, base64Audio);
-      if (success) {
-        sendResponse({ success: true });
+      if (isReady) {
+        const success = await sendAudioToContentScript(tab.id, base64Audio);
+        sendResponse({ success });
       } else {
-        sendResponse({ 
-          success: false, 
-          error: 'Could not play audio. Make sure you\'re on a regular webpage and try again.' 
-        });
+        sendResponse({ success: false, error: 'Content script not ready.' });
       }
     } else {
-      console.error('❌ No active tab found');
-      sendResponse({ 
-        success: false, 
-        error: 'No active tab found' 
-      });
+      sendResponse({ success: false, error: 'No active tab found.' });
     }
   } catch (error) {
     console.error('❌ Error generating speech:', error);
@@ -186,4 +269,4 @@ chrome.action.onClicked.addListener((tab) => {
   // This will open the popup, no additional action needed
 });
 
-console.log('OutLoud background service worker loaded with Cartesia TTS'); 
+console.log('OutLoud background service worker loaded with Cartesia TTS and caching'); 

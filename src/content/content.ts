@@ -1,75 +1,136 @@
-// Content script for OutLoud extension with Cartesia audio playback
-import { detectLanguage, SupportedLanguage } from '../utils/languageDetection.js';
+// Content script for OutLoud extension with Cartesia audio playback - Chinese only
 import { SpeedSetting } from '../cartesia.js';
 
 let currentAudio: HTMLAudioElement | null = null;
-let autoReadSettings = {
-  autoRead: false,
-  languageDetection: 'auto' as 'auto' | 'en' | 'zh',
+let currentSettings = {
+  isEnabled: false,
   speed: 'normal' as SpeedSetting,
   voice: ''
 };
+let lastProcessedText: string = '';
+let selectionTimeout: number | undefined;
+let fullAudioBlobUrl: string | null = null;
 
 // Load settings when content script initializes
 chrome.storage.local.get(['voiceSettings']).then(result => {
   if (result.voiceSettings) {
-    autoReadSettings = { ...autoReadSettings, ...result.voiceSettings };
-    console.log('🔧 Auto-read settings loaded:', autoReadSettings);
+    currentSettings = { ...currentSettings, ...result.voiceSettings };
+    console.log('🔧 Settings loaded:', currentSettings);
   }
 });
 
-// Listen for text selection
-document.addEventListener('mouseup', () => {
-  const selectedText = window.getSelection()?.toString().trim();
-  if (selectedText && selectedText.length > 0) {
-    // Store selected text for potential reading
-    chrome.storage.local.set({ lastSelectedText: selectedText });
+document.addEventListener('selectionchange', () => {
+    if (selectionTimeout) {
+        clearTimeout(selectionTimeout);
+    }
+
+    selectionTimeout = window.setTimeout(() => {
+        const selection = window.getSelection();
+        const currentText = selection ? selection.toString() : ''; // Keep whitespace for diffing
+
+        if (currentText !== lastProcessedText) {
+            const textToSpeak = getTextToSpeak(lastProcessedText, currentText);
+
+            if (textToSpeak.trim().length > 0 && currentSettings.isEnabled && selection) {
+                console.log('✨ New selection to process:', { full: currentText, diff: textToSpeak });
+                const range = selection.getRangeAt(0);
+                const rect = range.getBoundingClientRect();
+                autoReadSelectedText(textToSpeak, currentText, rect);
+            } else {
+                // If the new selection is empty or shouldn't be read, stop any current audio.
+                stopAudio();
+            }
+            lastProcessedText = currentText;
+        }
+    }, 250); // Debounce to handle rapid changes
+});
+
+
+function getTextToSpeak(oldText: string, newText: string): string {
+    console.log('🔍 getTextToSpeak called:', { oldText: `"${oldText}"`, newText: `"${newText}"` });
     
-    // Auto-read if enabled
-    if (autoReadSettings.autoRead) {
-      console.log('🤖 Auto-read triggered for:', selectedText.substring(0, 50) + '...');
-      console.log('🏃 Using speed setting:', autoReadSettings.speed);
-      autoReadSelectedText(selectedText);
+    if (!newText.trim()) {
+        console.log('📝 New text is empty, returning empty');
+        return '';
     }
-  }
-});
+    if (!oldText.trim()) {
+        console.log('📝 First selection, returning new text');
+        return newText; // First selection
+    }
 
-function autoReadSelectedText(text: string) {
-  // Determine language based on settings
-  let detectedLanguage: SupportedLanguage;
+    // Extending selection forward
+    if (newText.length > oldText.length && newText.startsWith(oldText)) {
+        const added = newText.substring(oldText.length);
+        console.log('📈 Extended forward, added:', `"${added}"`);
+        return added;
+    }
+    // Extending selection backward
+    if (newText.length > oldText.length && newText.endsWith(oldText)) {
+        const added = newText.substring(0, newText.length - oldText.length);
+        console.log('📈 Extended backward, added:', `"${added}"`);
+        return added;
+    }
+    // Shrinking selection from the end (e.g., "hello I am" -> "hello I")
+    if (newText.length < oldText.length && oldText.startsWith(newText)) {
+        const removedText = oldText.substring(newText.length);
+        console.log('📉 Selection shrunk from end, reading removed text:', `"${removedText}"`);
+        return removedText.trim();
+    }
+    // Shrinking selection from the beginning (e.g., "hello I am" -> "I am")
+    if (newText.length < oldText.length && oldText.endsWith(newText)) {
+        const removedText = oldText.substring(0, oldText.length - newText.length);
+        console.log('📉 Selection shrunk from beginning, reading removed text:', `"${removedText}"`);
+        return removedText.trim();
+    }
+    
+    // For completely different selections, read the new one
+    console.log('📝 Completely different selection, reading new text');
+    return newText;
+}
+
+
+function autoReadSelectedText(textToSpeak: string, fullText: string, selectionRect: DOMRect) {
+  // Check if this is a shrinking operation by comparing textToSpeak with fullText
+  const isShrinking = textToSpeak !== fullText && textToSpeak.trim().length > 0 && 
+                     (fullText.length === 0 || !fullText.includes(textToSpeak.trim()));
   
-  if (autoReadSettings.languageDetection === 'auto') {
-    const detection = detectLanguage(text);
-    detectedLanguage = detection.language;
-    console.log('🔍 Language detected:', detectedLanguage, `(${Math.round(detection.confidence * 100)}% confidence)`);
+  if (isShrinking) {
+    console.log('📉 Shrinking selection detected, only processing removed text');
+    // For shrinking, only process the removed text (textToSpeak)
+    chrome.runtime.sendMessage({
+      type: 'PROCESS_SELECTION_CHANGE',
+      textToSpeak: textToSpeak,
+      textToTranslate: textToSpeak, // Use the same text for translation
+      options: {
+        ...currentSettings,
+        language: 'zh'
+      },
+      selectionRect: {
+        top: selectionRect.top + window.scrollY,
+        left: selectionRect.left + window.scrollX,
+        width: selectionRect.width,
+        height: selectionRect.height
+      }
+    });
   } else {
-    detectedLanguage = autoReadSettings.languageDetection as SupportedLanguage;
-    console.log('🔧 Language forced to:', detectedLanguage);
+    console.log('📈 Extending selection or new selection, processing diff and full');
+    // For extending or new selections, process both diff and full text
+    chrome.runtime.sendMessage({
+      type: 'PROCESS_SELECTION_CHANGE',
+      textToSpeak: textToSpeak,
+      textToTranslate: fullText,
+      options: {
+        ...currentSettings,
+        language: 'zh'
+      },
+      selectionRect: {
+        top: selectionRect.top + window.scrollY,
+        left: selectionRect.left + window.scrollX,
+        width: selectionRect.width,
+        height: selectionRect.height
+      }
+    });
   }
-  
-  console.log('🎵 Auto-read will use settings:', {
-    speed: autoReadSettings.speed,
-    voice: autoReadSettings.voice || 'auto-select',
-    language: detectedLanguage
-  });
-  
-  // Send to background script to generate speech with detected language
-  chrome.runtime.sendMessage({
-    type: 'SPEAK_TEXT',
-    text: text,
-    options: {
-      ...autoReadSettings,
-      language: detectedLanguage
-    }
-  }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.error('Error in auto-read:', chrome.runtime.lastError.message);
-    } else if (response && !response.success) {
-      console.error('Auto-read failed:', response.error);
-    } else {
-      console.log('✅ Auto-read successful with speed:', autoReadSettings.speed);
-    }
-  });
 }
 
 // Listen for keyboard shortcut (Ctrl+Shift+S or Cmd+Shift+S)
@@ -78,9 +139,15 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault();
     const selectedText = window.getSelection()?.toString().trim();
     if (selectedText) {
-      console.log('⌨️ Keyboard shortcut triggered with speed:', autoReadSettings.speed);
-      // For manual trigger, also use language detection
-      autoReadSelectedText(selectedText);
+      // Manual trigger doesn't show translation overlay, just speaks
+      chrome.runtime.sendMessage({
+        type: 'SPEAK_TEXT',
+        text: selectedText,
+        options: {
+          ...currentSettings,
+          language: 'zh'
+        }
+      });
     }
   }
 });
@@ -88,16 +155,18 @@ document.addEventListener('keydown', (event) => {
 // Listen for messages from background script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'PING') {
-    // Respond to ping to confirm content script is ready
     sendResponse({ ready: true });
     return true;
   }
   
-  if (message.type === 'PLAY_AUDIO') {
-    console.log('Content script received PLAY_AUDIO message');
-    console.log('Audio data length:', message.audioData ? message.audioData.length : 'undefined');
-    console.log('MIME type:', message.mimeType);
-    playAudio(message.audioData, message.mimeType);
+  if (message.type === 'PLAY_DIFFERENCE_AND_FULL') {
+    playDiffThenFull(message);
+    sendResponse({ success: true });
+    return true;
+  }
+  
+  if (message.type === 'SHOW_TRANSLATION_OVERLAY') {
+    showTranslationOverlay(message.translation, message.selectionRect);
     sendResponse({ success: true });
     return true;
   }
@@ -115,26 +184,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   
   if (message.type === 'GET_VOICES') {
-    // Return Cartesia voices for both English and Chinese
-    const cartesiaVoices = [
-      // English voices
-      { id: '694f9389-aac1-45b6-b726-9d9369183238', name: 'Default Voice', language: 'en' },
-      { id: 'a0e99841-438c-4a64-b679-ae501e7d6091', name: 'British Male', language: 'en' },
-      { id: '2ee87190-8f84-4925-97da-e52547f9462c', name: 'American Female', language: 'en' },
-      { id: '820a3788-2b37-4d21-847a-b65d8a68c99a', name: 'Australian Male', language: 'en' },
-      // Chinese voices
+    const chineseVoices = [
       { id: '87748186-23bb-4158-a1eb-332911b0b708', name: '中文女声', language: 'zh' },
       { id: 'b9de4a89-2f3e-4f5c-9b8d-7c4a6b2f8e3d', name: '中文男声', language: 'zh' },
       { id: 'c8ef5b9a-3f4e-5f6d-ac9e-8d5a7c3f9e4f', name: '台湾女声', language: 'zh' }
     ];
-    sendResponse({ voices: cartesiaVoices });
+    sendResponse({ voices: chineseVoices });
     return true;
   }
   
-  if (message.type === 'UPDATE_AUTO_READ_SETTINGS') {
-    console.log('🔧 Updating auto-read settings:', message.settings);
-    console.log('🏃 Speed changed from', autoReadSettings.speed, 'to', message.settings.speed);
-    autoReadSettings = { ...autoReadSettings, ...message.settings };
+  if (message.type === 'UPDATE_SETTINGS') {
+    console.log('🔧 Updating settings:', message.settings);
+    const wasEnabled = currentSettings.isEnabled;
+    currentSettings = { ...currentSettings, ...message.settings };
+    
+    // If the extension was just disabled, stop any ongoing audio.
+    if (wasEnabled && !currentSettings.isEnabled) {
+        stopAudio();
+    }
+    
     sendResponse({ success: true });
     return true;
   }
@@ -142,107 +210,117 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-function playAudio(base64Data: string, mimeType: string) {
-  console.log('🎵 playAudio function called');
-  console.log('Base64 data received:', base64Data ? `${base64Data.length} characters` : 'null/undefined');
-  console.log('MIME type:', mimeType);
-  
-  try {
-    // Stop any currently playing audio
-    stopAudio();
+function showTranslationOverlay(translation: string, rect: any) {
+    // Remove existing overlay to prevent duplicates
+    dismissTranslationOverlay();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'outloud-translation-overlay';
+    overlay.textContent = translation;
     
-    if (!base64Data) {
-      console.error('❌ No audio data provided');
-      return;
-    }
-    
-    console.log('🔄 Converting base64 to blob...');
-    
-    // Convert base64 to blob
-    const binaryString = atob(base64Data);
-    console.log('Binary string length:', binaryString.length);
-    
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    const blob = new Blob([bytes], { type: mimeType });
-    console.log('Blob created:', blob.size, 'bytes, type:', blob.type);
-    
-    // Create audio element and play
-    currentAudio = new Audio();
-    const audioUrl = URL.createObjectURL(blob);
-    currentAudio.src = audioUrl;
-    
-    console.log('🎧 Audio element created with URL:', audioUrl);
-    
-    currentAudio.onloadstart = () => {
-      console.log('🔄 Audio loading started');
-    };
-    
-    currentAudio.oncanplay = () => {
-      console.log('✅ Audio can play');
-    };
-    
-    currentAudio.onplay = () => {
-      console.log('▶️ Started playing Cartesia audio');
-    };
-    
-    currentAudio.onended = () => {
-      console.log('⏹️ Finished playing audio');
-      cleanupAudio();
-    };
-    
-    currentAudio.onerror = (error) => {
-      console.error('❌ Audio playback error:', error);
-      console.error('Audio error event:', currentAudio?.error);
-      cleanupAudio();
-    };
-    
-    currentAudio.onabort = () => {
-      console.log('⏸️ Audio playback aborted');
-    };
-    
-    currentAudio.onstalled = () => {
-      console.log('⏳ Audio playback stalled');
-    };
-    
-    // Set volume to ensure it's audible
-    currentAudio.volume = 1.0;
-    
-    console.log('🚀 Attempting to play audio...');
-    // Play the audio
-    currentAudio.play().then(() => {
-      console.log('✅ Audio play() promise resolved');
-    }).catch(error => {
-      console.error('❌ Failed to play audio:', error);
-      console.error('Error name:', error.name);
-      console.error('Error message:', error.message);
-      cleanupAudio();
+    // Basic styling
+    Object.assign(overlay.style, {
+        position: 'absolute',
+        top: `${rect.top + rect.height}px`,
+        left: `${rect.left}px`,
+        backgroundColor: 'rgba(0, 0, 0, 0.75)',
+        color: 'white',
+        padding: '5px 10px',
+        borderRadius: '5px',
+        zIndex: '999999',
+        fontSize: '14px',
+        fontFamily: 'sans-serif',
+        maxWidth: '300px',
+        textAlign: 'left',
+        pointerEvents: 'none'
     });
-    
-  } catch (error) {
-    console.error('❌ Error in playAudio function:', error);
-  }
+
+    document.body.appendChild(overlay);
 }
+
+function dismissTranslationOverlay() {
+    const overlay = document.getElementById('outloud-translation-overlay');
+    if (overlay) {
+        overlay.style.transition = 'opacity 0.5s';
+        overlay.style.opacity = '0';
+        setTimeout(() => overlay.remove(), 500);
+    }
+}
+
+function playDiffThenFull(message: any) {
+    stopAudio();
+
+    showTranslationOverlay(message.translation, message.selectionRect);
+
+    const fullBinaryString = atob(message.fullAudioData);
+    const fullBytes = new Uint8Array(fullBinaryString.length);
+    for (let i = 0; i < fullBinaryString.length; i++) {
+        fullBytes[i] = fullBinaryString.charCodeAt(i);
+    }
+    const fullBlob = new Blob([fullBytes], { type: 'audio/mpeg' });
+    fullAudioBlobUrl = URL.createObjectURL(fullBlob);
+
+    const diffBinaryString = atob(message.diffAudioData);
+    const diffBytes = new Uint8Array(diffBinaryString.length);
+    for (let i = 0; i < diffBytes.length; i++) {
+        diffBytes[i] = diffBinaryString.charCodeAt(i);
+    }
+
+    const diffBlob = new Blob([diffBytes], { type: 'audio/mpeg' });
+
+    // Check if diff and full audio are the same by comparing the base64 strings
+    const isDiffSameAsFull = message.diffAudioData === message.fullAudioData;
+
+    currentAudio = new Audio();
+    currentAudio.src = URL.createObjectURL(diffBlob);
+
+    currentAudio.onended = () => {
+        if (currentAudio) URL.revokeObjectURL(currentAudio.src);
+        
+        // Only play the full audio if it's different from the diff audio
+        if (!isDiffSameAsFull && fullAudioBlobUrl) {
+            currentAudio = new Audio();
+            currentAudio.src = fullAudioBlobUrl;
+            currentAudio.onended = () => {
+                cleanupAudio();
+            };
+            currentAudio.play().catch(e => {
+                console.error("Failed to play full audio", e);
+                cleanupAudio();
+            });
+        } else {
+            // If they're the same, just clean up since we already played it
+            cleanupAudio();
+        }
+    };
+    
+    currentAudio.play().catch(e => {
+        console.error("Failed to play diff audio", e);
+        cleanupAudio();
+    });
+}
+
 
 function stopAudio() {
   if (currentAudio) {
-    console.log('⏹️ Stopping audio');
     currentAudio.pause();
     currentAudio.currentTime = 0;
-    cleanupAudio();
   }
+  cleanupAudio();
 }
 
 function cleanupAudio() {
   if (currentAudio) {
-    console.log('🧹 Cleaning up audio');
     if (currentAudio.src) {
       URL.revokeObjectURL(currentAudio.src);
     }
     currentAudio = null;
   }
+  if (fullAudioBlobUrl) {
+    URL.revokeObjectURL(fullAudioBlobUrl);
+    fullAudioBlobUrl = null;
+  }
+  dismissTranslationOverlay();
 }
 
-console.log('OutLoud content script loaded with Cartesia audio support and auto-read functionality'); 
+console.log('OutLoud content script loaded - Chinese language only'); 
