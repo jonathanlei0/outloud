@@ -24,14 +24,33 @@ document.addEventListener('selectionchange', () => {
         clearTimeout(selectionTimeout);
     }
 
+    if (!currentSettings.isEnabled) {
+        return;
+    }
+
     selectionTimeout = window.setTimeout(() => {
         const selection = window.getSelection();
+
+        if (!selection) {
+            return;
+        }
+
         const currentText = selection ? selection.toString() : ''; // Keep whitespace for diffing
+
+        // Check if the selection is more than 10 characters - save on API calls!
+        if (currentText.length > 100) {
+            return;
+        }
+
+        // Check if the selection starts with a Chinese character
+        if (currentText.length > 0 && !currentText.match(/^[\u4e00-\u9fa5]/)) {
+            return;
+        }
 
         if (currentText !== lastProcessedText) {
             const textToSpeak = getTextToSpeak(lastProcessedText, currentText);
 
-            if (textToSpeak.trim().length > 0 && currentSettings.isEnabled && selection) {
+            if (textToSpeak.trim().length > 0) {
                 console.log('✨ New selection to process:', { full: currentText, diff: textToSpeak });
                 const range = selection.getRangeAt(0);
                 const rect = range.getBoundingClientRect();
@@ -53,9 +72,10 @@ function getTextToSpeak(oldText: string, newText: string): string {
         console.log('📝 New text is empty, returning empty');
         return '';
     }
+
     if (!oldText.trim()) {
         console.log('📝 First selection, returning new text');
-        return newText; // First selection
+        return newText;
     }
 
     // Extending selection forward
@@ -273,6 +293,7 @@ function playDiffThenFull(message: any) {
 
     currentAudio = new Audio();
     currentAudio.src = URL.createObjectURL(diffBlob);
+    currentAudio.playbackRate = 0.75;
 
     currentAudio.onended = () => {
         if (currentAudio) URL.revokeObjectURL(currentAudio.src);
@@ -281,6 +302,7 @@ function playDiffThenFull(message: any) {
         if (!isDiffSameAsFull && fullAudioBlobUrl) {
             currentAudio = new Audio();
             currentAudio.src = fullAudioBlobUrl;
+            currentAudio.playbackRate = 0.75;
             currentAudio.onended = () => {
                 cleanupAudio();
             };
